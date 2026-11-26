@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Widened the tRPC peer range to `>=11.17.0 <12.0.0` and tested it against
+  tRPC 11.31. A new CI job runs the full suite against the minimum supported
+  release.
+- Updated `@webrtc-node/webrtc` to 0.3 for tests and the example. It installs
+  without scripts, so the repository no longer needs an install-script
+  approval for it.
+- Updated development tooling, including Vitest 5 and tsdown 0.23, and resolved
+  the open npm audit advisories.
+
+### Fixed
+
+- Reject an operation whose `AbortSignal` is already aborted. It previously
+  stayed pending forever.
+- Send `cancel` for in-flight operations when `link.close()` leaves the
+  channel open, so the server stops their procedures.
+- Return a subscription's iterator when one of its frames cannot be sent, so
+  the procedure's `finally` cleanup runs.
+- Pass array input through unchanged when resuming with `lastEventId`, as
+  tRPC's own adapters do.
+- Stop reporting benign races through `onProtocolError`: frames for an
+  operation the client just cancelled, and a cancellation for an operation the
+  server just finished.
+- Bound the peer-controlled text that frame parse errors echo back.
+- Skip the UTF-8 encode when a frame's length already decides the size check,
+  and reuse one `TextEncoder`.
+
 ## [0.2.0] - 2026-07-28
 
 ### Added

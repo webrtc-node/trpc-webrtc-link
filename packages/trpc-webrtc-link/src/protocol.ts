@@ -132,9 +132,25 @@ function malformed(message: string): WebRTCFrameParseResult {
   };
 }
 
+const MAX_DESCRIBED_VALUE_LENGTH = 64;
+
+/**
+ * Describe a peer-controlled value for an error message without echoing an
+ * arbitrarily large string back to the peer.
+ */
+function describeValue(value: unknown): string {
+  const text = String(value);
+  return text.length > MAX_DESCRIBED_VALUE_LENGTH
+    ? `${text.slice(0, MAX_DESCRIBED_VALUE_LENGTH)}…`
+    : text;
+}
+
+let cachedTextEncoder: TextEncoder | undefined;
+
 export function getUTF8ByteLength(value: string): number {
   if (typeof TextEncoder !== 'undefined') {
-    return new TextEncoder().encode(value).byteLength;
+    cachedTextEncoder ??= new TextEncoder();
+    return cachedTextEncoder.encode(value).byteLength;
   }
 
   let byteLength = 0;
@@ -160,6 +176,20 @@ export function getUTF8ByteLength(value: string): number {
   return byteLength;
 }
 
+/**
+ * Check a frame against a byte limit, skipping the UTF-8 encode when the
+ * UTF-16 length already decides the answer (each code unit is 1 to 3 bytes).
+ */
+export function exceedsUTF8ByteLimit(value: string, maxBytes: number): boolean {
+  if (value.length > maxBytes) {
+    return true;
+  }
+  if (value.length * 3 <= maxBytes) {
+    return false;
+  }
+  return getUTF8ByteLength(value) > maxBytes;
+}
+
 export function parseWebRTCFrame(
   data: unknown,
   maxMessageBytes = 1024 * 1024,
@@ -167,7 +197,7 @@ export function parseWebRTCFrame(
   if (typeof data !== 'string') {
     return malformed('RTCDataChannel messages must be JSON text frames');
   }
-  if (getUTF8ByteLength(data) > maxMessageBytes) {
+  if (exceedsUTF8ByteLimit(data, maxMessageBytes)) {
     return malformed(`Frame exceeds the ${maxMessageBytes} byte limit`);
   }
 
@@ -186,7 +216,7 @@ export function parseWebRTCFrame(
       ok: false,
       error: {
         code: 'unsupported_protocol',
-        message: `Unsupported protocol version: ${String(value.protocol)}`,
+        message: `Unsupported protocol version: ${describeValue(value.protocol)}`,
       },
     };
   }
@@ -286,7 +316,7 @@ export function parseWebRTCFrame(
       }
       return { ok: true, frame: value as unknown as WebRTCReconnectFrame };
     default:
-      return malformed(`Unknown frame type: ${value.type}`);
+      return malformed(`Unknown frame type: ${describeValue(value.type)}`);
   }
 }
 

@@ -4,7 +4,11 @@ import {
   WebRTCQueueOverflowError,
   WebRTCUnreliableChannelError,
 } from './errors.js';
-import { getUTF8ByteLength, serializeWebRTCFrame, type WebRTCProtocolFrame } from './protocol.js';
+import {
+  exceedsUTF8ByteLimit,
+  serializeWebRTCFrame,
+  type WebRTCProtocolFrame,
+} from './protocol.js';
 
 export type RTCDataChannelReadyState = 'connecting' | 'open' | 'closing' | 'closed';
 
@@ -246,7 +250,7 @@ export class DataChannelWriter {
         }),
       );
     }
-    if (getUTF8ByteLength(payload) > this.#options.maxMessageBytes) {
+    if (exceedsUTF8ByteLimit(payload, this.#options.maxMessageBytes)) {
       return Promise.reject(
         new RangeError(`WebRTC frame exceeds the ${this.#options.maxMessageBytes} byte limit`),
       );

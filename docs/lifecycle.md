@@ -165,8 +165,9 @@ idle client waits to make its first call.
 
 ## Cleanup ownership
 
-`link.close()` removes transport listeners and rejects operations. It closes
-the current channel only with `closeChannelOnDispose: true`. Failed and
+`link.close()` sends `cancel` for every operation the server already received,
+removes transport listeners, and rejects operations. It closes the current
+channel only with `closeChannelOnDispose: true`. Failed and
 replaced channels are always closed because they are no longer valid tRPC
 connections.
 

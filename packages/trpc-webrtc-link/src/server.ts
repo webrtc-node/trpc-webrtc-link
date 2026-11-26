@@ -38,6 +38,7 @@ import {
   type WebRTCRequestFrame,
   type WebRTCRequestId,
 } from './protocol.js';
+import { RecentIdSet } from './recent-ids.js';
 import { getRouterTransformer, shapeRouterError } from './trpc-internals.js';
 
 type MaybePromise<T> = T | Promise<T>;
@@ -172,14 +173,24 @@ function normalizeMaxConcurrentOperations(value: number | undefined): number {
   return value;
 }
 
+/**
+ * Mirrors tRPC's own adapters: only plain object (or absent) input receives
+ * `lastEventId`, so array and primitive input is never reshaped.
+ */
 function injectLastEventId(input: unknown, lastEventId: string | undefined): unknown {
-  if (!lastEventId || (input !== null && input !== undefined && typeof input !== 'object')) {
+  if (!lastEventId) {
     return input;
   }
-  return {
-    ...(input ?? {}),
-    lastEventId,
-  };
+  if (input === null || input === undefined) {
+    return { lastEventId };
+  }
+  if (typeof input === 'object' && !Array.isArray(input)) {
+    return {
+      ...input,
+      lastEventId,
+    };
+  }
+  return input;
 }
 
 class WebRTCServerHandler<TRouter extends AnyTRPCRouter, TPeer> implements WebRTCHandler {
@@ -190,6 +201,7 @@ class WebRTCServerHandler<TRouter extends AnyTRPCRouter, TPeer> implements WebRT
   readonly #writer: DataChannelWriter;
   readonly #contextController = new AbortController();
   readonly #active = new Map<WebRTCRequestId, ActiveServerOperation>();
+  readonly #finishedIds = new RecentIdSet();
   readonly #readyDeferred = deferred<void>();
   readonly #openTimeoutMs: number;
   readonly #handshakeTimeoutMs: number;
@@ -394,6 +406,10 @@ class WebRTCServerHandler<TRouter extends AnyTRPCRouter, TPeer> implements WebRT
     if (frame.type === 'cancel') {
       const operation = this.#active.get(frame.id);
       if (!operation) {
+        if (this.#finishedIds.has(frame.id)) {
+          // The operation ended while the client's cancellation was in flight.
+          return;
+        }
         this.#notifyProtocolError(
           new WebRTCProtocolError(`Received cancellation for unknown id ${frame.id}`),
         );
@@ -471,6 +487,7 @@ class WebRTCServerHandler<TRouter extends AnyTRPCRouter, TPeer> implements WebRT
         message: `This WebRTC connection allows at most ${this.#maxConcurrentOperations} concurrent operations`,
       });
       this.#notifyError(error, request.procedureType, request.path, request.input);
+      this.#finishedIds.add(request.id);
       this.#sendRequestError(request, error);
       return;
     }
@@ -545,10 +562,15 @@ class WebRTCServerHandler<TRouter extends AnyTRPCRouter, TPeer> implements WebRT
       );
 
       const iterator = iterable[Symbol.asyncIterator]();
+      let exhausted = false;
       try {
         while (!controller.signal.aborted) {
           const next = await nextWithAbort(iterator, controller.signal);
-          if (next === 'aborted' || next.done) {
+          if (next === 'aborted') {
+            break;
+          }
+          if (next.done) {
+            exhausted = true;
             break;
           }
           let output = next.value;
@@ -574,8 +596,12 @@ class WebRTCServerHandler<TRouter extends AnyTRPCRouter, TPeer> implements WebRT
           );
         }
       } finally {
-        if (controller.signal.aborted) {
-          await Promise.resolve(iterator.return?.()).catch(() => undefined);
+        // Also runs when a frame cannot be sent, so the procedure's own
+        // cleanup (`finally` blocks, listeners) is never skipped.
+        if (!exhausted) {
+          await Promise.resolve()
+            .then(() => iterator.return?.())
+            .catch(() => undefined);
         }
       }
       if (!controller.signal.aborted) {
@@ -596,6 +622,7 @@ class WebRTCServerHandler<TRouter extends AnyTRPCRouter, TPeer> implements WebRT
       }
     } finally {
       this.#active.delete(request.id);
+      this.#finishedIds.add(request.id);
     }
   }
 

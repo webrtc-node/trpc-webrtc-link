@@ -35,10 +35,11 @@ npm run test:e2e
 - Browser-facing package source must use the structural `RTCDataChannelLike`
   interface and must not import or bundle `@webrtc-node/webrtc`.
 - The package prefers public tRPC APIs. The required
-  `router._def._config` access is isolated in `src/trpc-internals.ts` and is the
-  reason the peer dependency has a tested upper bound. Development tests use
-  the newest supported tRPC release, while packed-consumer tests also exercise
-  the minimum supported `11.17.0` release.
+  `router._def._config` access is isolated in `src/trpc-internals.ts`. tRPC's
+  own adapters rely on the same field throughout v11, so the peer range spans
+  the v11 major. Development tests use the newest tRPC release, and Dependabot
+  opens a CI run for each new minor. The `minimum-trpc` CI job runs the full
+  suite against the minimum supported `11.17.0` release.
 - Keep SDP/ICE signaling, peer discovery, identity policy, and framework
   integrations outside the core transport. Reconnection belongs in the
   transport, but obtaining each replacement channel remains a signaling

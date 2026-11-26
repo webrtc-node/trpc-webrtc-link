@@ -115,6 +115,11 @@ server aborts the procedure signal and removes queued responses for that
 operation. Cancellation is best effort and does not provide transactional or
 exactly-once semantics.
 
+Frames that are still in flight when an operation ends are expected. A client
+ignores responses for operations it recently cancelled. A server ignores
+cancellations for operations it recently finished. Neither case is reported
+through `onProtocolError`.
+
 ## Flow control
 
 Frames are serialized before enqueueing and checked against

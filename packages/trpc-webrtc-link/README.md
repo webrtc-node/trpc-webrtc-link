@@ -16,7 +16,7 @@ channels but does not create peer connections or decide who a peer is.
 - Node.js 20.19 or newer;
 - TypeScript 5.7.2 or newer;
 - matching `@trpc/client` and `@trpc/server` versions in the supported range
-  `>=11.17.0 <11.19.0`;
+  `>=11.17.0 <12.0.0`;
 - an ordered, reliable `RTCDataChannel`.
 
 Install the transport and tRPC peers:
