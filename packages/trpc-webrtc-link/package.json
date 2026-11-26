@@ -55,15 +55,15 @@
     "@trpc/server": ">=11.17.0 <11.19.0"
   },
   "devDependencies": {
-    "@trpc/client": "^11.18.0",
-    "@trpc/server": "^11.18.0",
-    "@vitest/coverage-v8": "^4.1.10",
-    "@webrtc-node/webrtc": "^0.2.1",
-    "superjson": "^2.2.6",
+    "@trpc/client": "^11.31.4",
+    "@trpc/server": "^11.31.4",
+    "@vitest/coverage-v8": "^5.1.2",
+    "@webrtc-node/webrtc": "^0.3.2",
+    "superjson": "^2.2.7",
     "tsd": "^0.33.0",
-    "tsdown": "^0.22.14",
-    "vitest": "^4.1.10",
-    "zod": "^4.4.3"
+    "tsdown": "^0.23.7",
+    "vitest": "^5.1.2",
+    "zod": "^4.6.7"
   },
   "engines": {
     "node": ">=20.19.0"
