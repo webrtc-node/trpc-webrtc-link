@@ -118,7 +118,7 @@ function hasValidEventId(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0 && value.length <= MAX_EVENT_ID_LENGTH;
 }
 
-function hasValidConnectionParams(value: unknown): value is WebRTCConnectionParams {
+export function isWebRTCConnectionParams(value: unknown): value is WebRTCConnectionParams {
   return isRecord(value) && Object.values(value).every((entry) => typeof entry === 'string');
 }
 
@@ -231,7 +231,7 @@ export function parseWebRTCFrame(
       }
       if (
         value.connectionParams !== undefined &&
-        !hasValidConnectionParams(value.connectionParams)
+        !isWebRTCConnectionParams(value.connectionParams)
       ) {
         return malformed('Handshake connectionParams must contain only string values');
       }

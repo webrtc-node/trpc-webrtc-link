@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking:** `maxConcurrentOperations` now defaults to 100 per channel
+  instead of unlimited. Pass `Infinity` to keep the previous behavior.
+- `link.reconnect()` and server-requested reconnects make a single attempt
+  unless automatic reconnection is enabled. They previously retried forever.
 - Widened the tRPC peer range to `>=11.17.0 <12.0.0` and tested it against
   tRPC 11.31. A new CI job runs the full suite against the minimum supported
   release.
@@ -20,6 +24,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep-alive no longer closes a healthy connection whose ping is waiting behind
+  backpressure. The pong deadline restarts while the send queue drains.
+- Report input that the router's transformer cannot deserialize as
+  `PARSE_ERROR` instead of `INTERNAL_SERVER_ERROR`.
+- Report, through `onError`, a cancelled subscription that has not stopped
+  after 5 seconds.
+- Reject `connectionParams` values that are not strings on the client with a
+  `TypeError`. The server previously closed the channel with a protocol
+  error.
+- Keep-alive records inbound activity as a timestamp instead of resetting two
+  timers on every frame.
 - Reject an operation whose `AbortSignal` is already aborted. It previously
   stayed pending forever.
 - Send `cancel` for in-flight operations when `link.close()` leaves the

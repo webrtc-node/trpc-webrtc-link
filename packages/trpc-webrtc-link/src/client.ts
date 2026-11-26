@@ -28,6 +28,7 @@ import {
   type WebRTCKeepAliveOptions,
 } from './heartbeat.js';
 import {
+  isWebRTCConnectionParams,
   parseWebRTCFrame,
   serializeWebRTCFrame,
   TRPC_WEBRTC_PROTOCOL,
@@ -467,7 +468,9 @@ class WebRTCClientTransport {
       this.#attemptController?.abort(reason);
       await activeConnection?.catch(() => undefined);
     }
-    await this.#ensureConnected(reason, true);
+    // Retry only when the application opted into reconnection; otherwise a
+    // manual or server-requested reconnect makes one attempt and reports it.
+    await this.#ensureConnected(reason, this.#reconnectOptions.enabled);
   }
 
   public subscribe(operation: ClientOperation, observer: ClientObserver): () => void {
@@ -708,6 +711,10 @@ class WebRTCClientTransport {
           ? await raceWithSignal(Promise.resolve(this.#connectionParams()), controller.signal)
           : (this.#connectionParams ?? null);
 
+      if (rawConnectionParams !== null && !isWebRTCConnectionParams(rawConnectionParams)) {
+        throw new TypeError('connectionParams must be an object whose values are all strings');
+      }
+
       const writer = new DataChannelWriter(channel, this.#backpressure);
       const handshake = deferred<void>();
       this.#channel = channel;
@@ -750,7 +757,9 @@ class WebRTCClientTransport {
           }
         },
       });
-      this.#heartbeat.start();
+      const heartbeat = this.#heartbeat;
+      writer.onFrameSent = () => heartbeat.outboundProgress();
+      heartbeat.start();
       this.#setState({
         state: 'open',
         channel,
@@ -849,7 +858,7 @@ class WebRTCClientTransport {
     }
 
     if (willReconnect) {
-      void this.#ensureConnected(error, true).catch((cause: unknown) => {
+      void this.#ensureConnected(error, this.#reconnectOptions.enabled).catch((cause: unknown) => {
         const finalError = cause instanceof Error ? cause : new Error(String(cause));
         for (const pending of [...this.#pending.values()]) {
           if (pending.operation.type === 'subscription') {

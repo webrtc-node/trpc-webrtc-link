@@ -272,8 +272,11 @@ round-robin so a busy subscription cannot starve other calls.
 
 Frames are never silently dropped. Queue overflow fails the affected operation
 with `WebRTCQueueOverflowError`. Configure `maxMessageBytes` at or below the
-effective SCTP message size used by both peers. Servers can additionally set
-`maxConcurrentOperations`.
+effective SCTP message size used by both peers. Servers reject requests beyond
+`maxConcurrentOperations` (100 active operations per channel by default) with
+`TOO_MANY_REQUESTS`. Pass `Infinity` to disable the limit. A cancelled
+subscription keeps its slot until its procedure really stops. One that ignores
+its abort signal for 5 seconds is reported through `onError`.
 
 ## Errors and lifecycle callbacks
 

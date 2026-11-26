@@ -209,6 +209,12 @@ export class DataChannelWriter {
   #pumping = false;
   #closedError: Error | null = null;
 
+  /**
+   * Called after each frame is handed to the channel. Keep-alive uses it as
+   * proof that a backpressured channel is still draining. Must not throw.
+   */
+  public onFrameSent: (() => void) | undefined;
+
   readonly #onBufferedAmountLow = () => {
     this.#schedulePump();
   };
@@ -365,6 +371,7 @@ export class DataChannelWriter {
         try {
           this.#channel.send(write.payload);
           write.resolve();
+          this.onFrameSent?.();
         } catch (cause) {
           const error = new WebRTCChannelNotOpenError('RTCDataChannel send failed', {
             cause,

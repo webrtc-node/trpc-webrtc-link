@@ -72,8 +72,9 @@ export interface CreateWebRTCHandlerOptions<TRouter extends AnyTRPCRouter, TPeer
   backpressure?: WebRTCBackpressureOptions;
   keepAlive?: WebRTCKeepAliveOptions;
   /**
-   * Reject additional requests after this many operations are active.
-   * @default Infinity
+   * Reject additional requests after this many operations are active. Pass
+   * `Infinity` to disable the limit.
+   * @default 100
    */
   maxConcurrentOperations?: number;
   /**
@@ -163,9 +164,20 @@ async function nextWithAbort(
   });
 }
 
+const DEFAULT_MAX_CONCURRENT_OPERATIONS = 100;
+
+/**
+ * How long a cancelled subscription may take to stop before `onError` reports
+ * it. The operation keeps its concurrency slot until it really stops.
+ */
+const SUBSCRIPTION_STOP_WARNING_MS = 5_000;
+
 function normalizeMaxConcurrentOperations(value: number | undefined): number {
-  if (value === undefined || value === Number.POSITIVE_INFINITY) {
-    return Number.POSITIVE_INFINITY;
+  if (value === undefined) {
+    return DEFAULT_MAX_CONCURRENT_OPERATIONS;
+  }
+  if (value === Number.POSITIVE_INFINITY) {
+    return value;
   }
   if (!Number.isSafeInteger(value) || value < 1) {
     throw new RangeError('maxConcurrentOperations must be a positive safe integer or Infinity');
@@ -454,6 +466,7 @@ class WebRTCServerHandler<TRouter extends AnyTRPCRouter, TPeer> implements WebRT
         this.#handshakeTimer = undefined;
       }
       this.#state = 'ready';
+      this.#writer.onFrameSent = () => this.#heartbeat.outboundProgress();
       this.#heartbeat.start();
       this.#readyDeferred.resolve();
     } catch (cause) {
@@ -502,7 +515,15 @@ class WebRTCServerHandler<TRouter extends AnyTRPCRouter, TPeer> implements WebRT
   async #execute(request: WebRTCRequestFrame, controller: AbortController): Promise<void> {
     let input: unknown = request.input;
     try {
-      input = getRouterTransformer(this.#router).input.deserialize(request.input);
+      try {
+        input = getRouterTransformer(this.#router).input.deserialize(request.input);
+      } catch (cause) {
+        throw new TRPCError({
+          code: 'PARSE_ERROR',
+          message: 'Unable to deserialize request input',
+          cause,
+        });
+      }
       input = injectLastEventId(input, request.lastEventId);
       const result = await callTRPCProcedure({
         router: this.#router,
@@ -599,9 +620,7 @@ class WebRTCServerHandler<TRouter extends AnyTRPCRouter, TPeer> implements WebRT
         // Also runs when a frame cannot be sent, so the procedure's own
         // cleanup (`finally` blocks, listeners) is never skipped.
         if (!exhausted) {
-          await Promise.resolve()
-            .then(() => iterator.return?.())
-            .catch(() => undefined);
+          await this.#returnIterator(iterator, request, input);
         }
       }
       if (!controller.signal.aborted) {
@@ -623,6 +642,37 @@ class WebRTCServerHandler<TRouter extends AnyTRPCRouter, TPeer> implements WebRT
     } finally {
       this.#active.delete(request.id);
       this.#finishedIds.add(request.id);
+    }
+  }
+
+  async #returnIterator(
+    iterator: AsyncIterator<unknown>,
+    request: WebRTCRequestFrame,
+    input: unknown,
+  ): Promise<void> {
+    // An async generator queues return() behind a pending next(), so a
+    // procedure that ignores its abort signal never stops. Report it instead
+    // of waiting silently. The slot stays held so the limit stays honest.
+    const warning = setTimeout(() => {
+      this.#notifyError(
+        new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: `Subscription ${request.path} did not stop within ${SUBSCRIPTION_STOP_WARNING_MS}ms of cancellation and still counts toward maxConcurrentOperations`,
+        }),
+        request.procedureType,
+        request.path,
+        input,
+      );
+    }, SUBSCRIPTION_STOP_WARNING_MS);
+    if (typeof warning === 'object' && typeof warning.unref === 'function') {
+      warning.unref();
+    }
+    try {
+      await Promise.resolve().then(() => iterator.return?.());
+    } catch {
+      // A failure in the procedure's own cleanup is not a transport error.
+    } finally {
+      clearTimeout(warning);
     }
   }
 
