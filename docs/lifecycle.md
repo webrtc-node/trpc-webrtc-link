@@ -52,7 +52,9 @@ option. tRPC subscription observers receive the native tRPC states `idle`,
 
 `connect()` joins an in-progress attempt and resolves at `open`.
 `reconnect()` intentionally replaces the active channel and requires a
-factory. `link.close()` is final.
+factory. It follows the automatic reconnect retry policy when reconnection is
+enabled, and makes a single attempt otherwise. A server-requested reconnect
+behaves the same way. `link.close()` is final.
 
 ## Automatic reconnect
 
@@ -142,7 +144,11 @@ keepAlive: {
 }
 ```
 
-Any valid inbound traffic proves liveness and postpones the next ping. A
+Any valid inbound traffic proves liveness and postpones the next ping. The
+pong deadline measures the peer, not the local send queue. While a ping waits
+behind backpressure, each frame the writer sends restarts the deadline, and it
+restarts again when the ping itself is sent. A slow connection that is still
+draining stays open, and one whose queue stops draining still times out. A
 deadline failure closes the unusable channel and follows normal reconnect
 policy.
 
@@ -165,8 +171,9 @@ idle client waits to make its first call.
 
 ## Cleanup ownership
 
-`link.close()` removes transport listeners and rejects operations. It closes
-the current channel only with `closeChannelOnDispose: true`. Failed and
+`link.close()` sends `cancel` for every operation the server already received,
+removes transport listeners, and rejects operations. It closes the current
+channel only with `closeChannelOnDispose: true`. Failed and
 replaced channels are always closed because they are no longer valid tRPC
 connections.
 

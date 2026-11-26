@@ -28,7 +28,9 @@ import {
   type WebRTCKeepAliveOptions,
 } from './heartbeat.js';
 import {
+  isWebRTCConnectionParams,
   parseWebRTCFrame,
+  serializeWebRTCFrame,
   TRPC_WEBRTC_PROTOCOL,
   type WebRTCCancelFrame,
   type WebRTCConnectionParams,
@@ -37,6 +39,7 @@ import {
   type WebRTCRequestId,
   type WebRTCServerFrame,
 } from './protocol.js';
+import { RecentIdSet } from './recent-ids.js';
 import { normalizeTransformer, type WebRTCTransformer } from './trpc-internals.js';
 
 type MaybePromise<T> = T | Promise<T>;
@@ -387,6 +390,7 @@ class WebRTCClientTransport {
   readonly #pending = new Map<WebRTCRequestId, PendingClientOperation>();
   readonly #stateListeners = new Set<(state: WebRTCLinkState) => void>();
   readonly #lifecycleController = new AbortController();
+  readonly #cancelledIds = new RecentIdSet();
 
   #connectionState: WebRTCLinkState = { state: 'idle', error: null };
   #channel: RTCDataChannelLike | null = null;
@@ -464,7 +468,9 @@ class WebRTCClientTransport {
       this.#attemptController?.abort(reason);
       await activeConnection?.catch(() => undefined);
     }
-    await this.#ensureConnected(reason, true);
+    // Retry only when the application opted into reconnection; otherwise a
+    // manual or server-requested reconnect makes one attempt and reports it.
+    await this.#ensureConnected(reason, this.#reconnectOptions.enabled);
   }
 
   public subscribe(operation: ClientOperation, observer: ClientObserver): () => void {
@@ -482,8 +488,9 @@ class WebRTCClientTransport {
     };
 
     if (operation.signal?.aborted) {
-      onAbort();
-      return cleanupSignal;
+      stopped = true;
+      observer.error(this.#toClientError(createAbortError(operation.signal.reason)));
+      return () => undefined;
     }
 
     const pending: PendingClientOperation = {
@@ -530,6 +537,7 @@ class WebRTCClientTransport {
       return;
     }
     const channel = this.#channel;
+    this.#cancelSentOperations(reason);
     this.#lifecycleController.abort(reason);
     this.#attemptController?.abort(reason);
     this.#cleanupConnection(reason);
@@ -547,6 +555,41 @@ class WebRTCClientTransport {
       );
       if (this.#closeChannelOnDispose && channel.readyState !== 'closed') {
         channel.close();
+      }
+    }
+  }
+
+  /**
+   * Tell the server to stop work for operations it already received. Used on
+   * disposal, when the channel may stay open and the server would otherwise
+   * keep running subscriptions for a client that no longer listens.
+   */
+  #cancelSentOperations(reason: Error): void {
+    const channel = this.#channel;
+    const writer = this.#writer;
+    if (!channel || !writer || !this.#isReady() || channel.readyState !== 'open') {
+      return;
+    }
+    for (const pending of this.#pending.values()) {
+      if (pending.terminal || pending.sentGeneration !== this.#generation) {
+        continue;
+      }
+      if (writer.cancelKey(pending.id, reason)) {
+        // The request never left the send queue.
+        continue;
+      }
+      try {
+        // The writer is about to be closed, so cancellation bypasses its queue.
+        channel.send(
+          serializeWebRTCFrame({
+            protocol: TRPC_WEBRTC_PROTOCOL,
+            type: 'cancel',
+            id: pending.id,
+            reason: reason.message.slice(0, 1024),
+          }),
+        );
+      } catch {
+        return;
       }
     }
   }
@@ -668,6 +711,10 @@ class WebRTCClientTransport {
           ? await raceWithSignal(Promise.resolve(this.#connectionParams()), controller.signal)
           : (this.#connectionParams ?? null);
 
+      if (rawConnectionParams !== null && !isWebRTCConnectionParams(rawConnectionParams)) {
+        throw new TypeError('connectionParams must be an object whose values are all strings');
+      }
+
       const writer = new DataChannelWriter(channel, this.#backpressure);
       const handshake = deferred<void>();
       this.#channel = channel;
@@ -710,7 +757,9 @@ class WebRTCClientTransport {
           }
         },
       });
-      this.#heartbeat.start();
+      const heartbeat = this.#heartbeat;
+      writer.onFrameSent = () => heartbeat.outboundProgress();
+      heartbeat.start();
       this.#setState({
         state: 'open',
         channel,
@@ -809,7 +858,7 @@ class WebRTCClientTransport {
     }
 
     if (willReconnect) {
-      void this.#ensureConnected(error, true).catch((cause: unknown) => {
+      void this.#ensureConnected(error, this.#reconnectOptions.enabled).catch((cause: unknown) => {
         const finalError = cause instanceof Error ? cause : new Error(String(cause));
         for (const pending of [...this.#pending.values()]) {
           if (pending.operation.type === 'subscription') {
@@ -835,6 +884,7 @@ class WebRTCClientTransport {
     this.#writer?.close(error);
     this.#writer = null;
     this.#channel = null;
+    this.#cancelledIds.clear();
   }
 
   #flushPending(): void {
@@ -957,6 +1007,13 @@ class WebRTCClientTransport {
 
     const pending = this.#pending.get(frame.id);
     if (!pending) {
+      if (this.#cancelledIds.has(frame.id)) {
+        // The server sent this before it processed our cancellation.
+        if (frame.type === 'complete' || frame.type === 'error') {
+          this.#cancelledIds.delete(frame.id);
+        }
+        return;
+      }
       this.#protocolViolation(`Received ${frame.type} for unknown id ${frame.id}`, false);
       return;
     }
@@ -1077,6 +1134,9 @@ class WebRTCClientTransport {
     const writer = this.#writer;
     const wasSent = pending.sentGeneration === this.#generation;
     const removedBeforeSend = wasSent && writer?.cancelKey(id, error);
+    if (wasSent && !removedBeforeSend) {
+      this.#cancelledIds.add(id);
+    }
     if (wasSent && !removedBeforeSend && writer && this.#isReady()) {
       const frame: WebRTCCancelFrame = {
         protocol: TRPC_WEBRTC_PROTOCOL,
