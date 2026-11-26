@@ -1,6 +1,6 @@
 {
   "name": "@webrtc-node/trpc-webrtc-link",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "A complete tRPC v11 client link and server transport for WebRTC RTCDataChannels.",
   "keywords": [
     "trpc",

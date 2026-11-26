@@ -14,7 +14,7 @@
   "dependencies": {
     "@trpc/client": "^11.31.4",
     "@trpc/server": "^11.31.4",
-    "@webrtc-node/trpc-webrtc-link": "0.2.0",
+    "@webrtc-node/trpc-webrtc-link": "0.3.0",
     "@webrtc-node/webrtc": "^0.3.2",
     "ws": "^8.23.0",
     "zod": "^4.6.7"

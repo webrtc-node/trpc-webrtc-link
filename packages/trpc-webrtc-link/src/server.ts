@@ -657,7 +657,7 @@ class WebRTCServerHandler<TRouter extends AnyTRPCRouter, TPeer> implements WebRT
       this.#notifyError(
         new TRPCError({
           code: 'INTERNAL_SERVER_ERROR',
-          message: `Subscription ${request.path} did not stop within ${SUBSCRIPTION_STOP_WARNING_MS}ms of cancellation and still counts toward maxConcurrentOperations`,
+          message: `Subscription ${request.path} did not stop within ${SUBSCRIPTION_STOP_WARNING_MS}ms of being told to and still counts toward maxConcurrentOperations`,
         }),
         request.procedureType,
         request.path,
